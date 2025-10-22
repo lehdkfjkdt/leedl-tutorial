@@ -1,5 +1,4 @@
-[![GitHub issues](https://img.shields.io/github/issues/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/issues) [![GitHub stars](https://img.shields.io/github/stars/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/stargazers) [![GitHub forks](https://img.shields.io/github/forks/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/network) [![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fdatawhalechina%2Fleedl-tutorial%2F&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)](https://hits.seeyoufarm.com) 
-![Downloads](https://img.shields.io/github/downloads/datawhalechina/leedl-tutorial/total) <a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/"><img alt="知识共享许可协议" style="border-width:0" src="https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey" /></a>
+[![GitHub issues](https://img.shields.io/github/issues/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/issues) [![GitHub stars](https://img.shields.io/github/stars/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/stargazers) [![GitHub forks](https://img.shields.io/github/forks/datawhalechina/leedl-tutorial)](https://github.com/datawhalechina/leedl-tutorial/network)![Downloads](https://img.shields.io/github/downloads/datawhalechina/leedl-tutorial/total) <a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/"><img alt="知识共享许可协议" style="border-width:0" src="https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-lightgrey" /></a>
 
 # 李宏毅深度学习教程LeeDL-Tutorial（苹果书）
 
@@ -17,6 +16,30 @@
 >ℹ️ **[李宏毅老师推荐](https://twitter.com/HungyiLee2/status/1754042391211004235)：**
 
 <div align=center><img src="https://github.com/datawhalechina/leedl-tutorial/blob/master/assets/prof._lee_twitter.jpg?raw=true" height = "450" alt="李宏毅老师推荐。"></div>
+
+## 贡献者
+
+<table border="0">
+  <tbody>
+    <tr align="center" >
+      <td>
+         <a href="https://github.com/qiwang067"><img width="70" height="70" src="https://github.com/qiwang067.png?s=40" alt="pic"></a><br>
+         <a href="https://github.com/qiwang067">Qi Wang</a> 
+        <p> 上海交通大学博士生<br>中国科学院大学硕士</p>
+      </td>
+      <td>
+         <a href="https://yyysjz1997.github.io/"><img width="70" height="70" src="https://github.com/yyysjz1997.png?s=40" alt="pic"></a><br>
+         <a href="https://yyysjz1997.github.io/">Yiyuan Yang</a> 
+        <p> 牛津大学博士生<br>清华大学硕士</p>
+      </td>
+      <td>
+         <a href="https://github.com/JohnJim0816"><img width="70" height="70" src="https://github.com/JohnJim0816.png?s=40" alt="pic"></a><br>
+         <a href="https://github.com/JohnJim0816">John Jim</a>
+         <p>北京大学硕士</p>
+      </td>
+    </tr>
+  </tbody>
+</table>
 
 ## 纸质版
 
@@ -45,14 +68,15 @@
 
 豆瓣评分：https://book.douban.com/subject/36997460/
 
-ℹ️ **勘误修订表**：https://datawhalechina.github.io/leedl-tutorial/#/errata
+> [!IMPORTANT]
+**勘误修订表**：https://datawhalechina.github.io/leedl-tutorial/#/errata
 
 
 ## 最新版PDF下载
 
 地址：https://github.com/datawhalechina/leedl-tutorial/releases
 
-国内地址(推荐国内读者使用)：链接: https://pan.baidu.com/s/1zPN1_pdISW5CKtI64Hc9ZA 提取码: 3q4w 
+国内地址：https://pan.baidu.com/s/1qgAIFblbSn4MxnwzALJXPg 提取码: 1cnm
 
 ## 纸质版和PDF版的区别
 
@@ -121,30 +145,6 @@ PDF版本是全书初稿，人民邮电出版社的编辑老师们对初稿进�
 - 对**强化学习玩我的世界（Minecraft）游戏**感兴趣的读者，可阅读 [LS-Imagine](https://github.com/qiwang067/LS-Imagine)
 - 对**强化学习**感兴趣的读者，可阅读[蘑菇书EasyRL](https://github.com/datawhalechina/easy-rl)
 - 对**视觉强化学习**感兴趣的读者，可阅读 [Awesome Visual RL](https://github.com/qiwang067/awesome-visual-rl)
-
-## 贡献者
-
-<table border="0">
-  <tbody>
-    <tr align="center" >
-      <td>
-         <a href="https://github.com/qiwang067"><img width="70" height="70" src="https://github.com/qiwang067.png?s=40" alt="pic"></a><br>
-         <a href="https://github.com/qiwang067">Qi Wang</a> 
-        <p> 上海交通大学博士生<br>中国科学院大学硕士</p>
-      </td>
-      <td>
-         <a href="https://yyysjz1997.github.io/"><img width="70" height="70" src="https://github.com/yyysjz1997.png?s=40" alt="pic"></a><br>
-         <a href="https://yyysjz1997.github.io/">Yiyuan Yang</a> 
-        <p> 牛津大学博士生<br>清华大学硕士</p>
-      </td>
-      <td>
-         <a href="https://github.com/JohnJim0816"><img width="70" height="70" src="https://github.com/JohnJim0816.png?s=40" alt="pic"></a><br>
-         <a href="https://github.com/JohnJim0816">John Jim</a>
-         <p>北京大学硕士</p>
-      </td>
-    </tr>
-  </tbody>
-</table>
 
 
 ## 引用信息
