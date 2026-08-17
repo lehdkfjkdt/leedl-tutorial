@@ -684,4 +684,4 @@ ABot-N1 相比 ABot-N0 的核心升级可以概括为：
 2. ABot-N1 项目页面：https://amap-cvlab.github.io/ABot-Navigation/ABot-N1/
 3. ABot Navigation GitHub：https://github.com/amap-cvlab/ABot-Navigation/tree/ABotN-Bench
 4. HuggingFace Papers：https://huggingface.co/papers/2607.10383
-5. 本地 PDF：[ABot-N1.pdf](./ABot-N1.pdf)
+5. 论文 PDF：https://arxiv.org/pdf/2607.10383
