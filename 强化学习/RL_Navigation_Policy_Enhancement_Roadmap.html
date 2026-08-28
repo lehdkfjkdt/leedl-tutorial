@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RL Navigation Policy 增强路线图 · NavRL → SEA-Nav → VOP-Nav</title>
+<style>
+:root{
+  --bg:#F5F7F6;--paper:#FFF;--soft:#ECEFEC;--ink:#17221D;--ink2:#45554C;--ink3:#73827A;
+  --line:#DCE3DC;--line2:#C3CEC4;--acc:#0C8C81;--acc-ink:#0A6A62;--acc-soft:#E2F2EF;
+  --blue:#3D5AA8;--blue-b:#E6EBF6;--purple:#7A57BE;--purple-b:#ECE5F7;--green:#2C8A7E;--green-b:#DEF0EC;
+  --red:#C0392B;--red-b:#FBE7E3;--orange:#B07A17;--orange-b:#F6EBD7;--teal:#167D91;--teal-b:#E0F2F6;
+  --mono:ui-monospace,Menlo,Consolas,monospace;--serif:Georgia,"Songti SC","Noto Serif CJK SC",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Arial,sans-serif;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#0F1317;--paper:#171C21;--soft:#1E242A;--ink:#E6EBF0;--ink2:#A2ACB5;--ink3:#6C767E;
+  --line:#293138;--line2:#3A434B;--acc:#34C9B9;--acc-ink:#7EDCCF;--acc-soft:#10312D;
+  --blue:#8098DC;--blue-b:#1A2338;--purple:#B79BEC;--purple-b:#221A3B;--green:#48C1B0;--green-b:#10302B;
+  --red:#F0776A;--red-b:#351610;--orange:#D6A452;--orange-b:#2E2410;--teal:#69C3D2;--teal-b:#102A31;
+}}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65}
+.doc{max-width:1040px;margin:0 auto;padding:52px 22px 90px}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--acc);margin:0 0 14px}
+h1{font-family:var(--serif);font-size:clamp(28px,4vw,40px);line-height:1.15;margin:0 0 10px}
+.sub{font-size:15px;color:var(--ink2);margin:0 0 6px;font-style:italic;font-family:var(--serif)}
+.meta{font-family:var(--mono);font-size:11px;color:var(--ink3);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:10px 0;margin:20px 0 32px;display:flex;flex-wrap:wrap;gap:6px 20px}
+h2{font-family:var(--serif);font-size:22px;margin:42px 0 8px;display:flex;align-items:baseline;gap:11px}
+h2 .n{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--acc)}
+h3{font-size:16px;margin:22px 0 8px} p{margin:0 0 13px;font-size:15px} strong{font-weight:750}
+code{font-family:var(--mono);font-size:.93em;background:var(--soft);padding:1px 5px;border-radius:5px}
+.vision{background:var(--acc-soft);border-left:4px solid var(--acc);border-radius:0 10px 10px 0;padding:17px 20px;margin:8px 0 18px}
+.vision p{margin:0;font-family:var(--serif);font-size:16.5px;line-height:1.58;color:var(--acc-ink)}
+.callout{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:13px 16px;margin:13px 0}
+.callout .ct{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:800;margin-bottom:6px}
+.callout p{margin:0;font-size:13.5px;color:var(--ink2)} .callout p b{color:var(--ink)}
+.callout.risk{border-left:4px solid var(--red)} .callout.risk .ct{color:var(--red)}
+.callout.new{border-left:4px solid var(--orange)} .callout.new .ct{color:var(--orange)}
+.callout.info{border-left:4px solid var(--blue)} .callout.info .ct{color:var(--blue)}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;margin:14px 0;background:var(--paper)}
+table{border-collapse:collapse;width:100%;min-width:760px}
+th,td{text-align:left;padding:10px 13px;font-size:13px;vertical-align:top}
+th{font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3);font-weight:650;border-bottom:1.5px solid var(--line2);background:var(--soft)}
+td{border-top:1px solid var(--line);color:var(--ink2)} td.k{color:var(--ink);font-weight:700;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin:16px 0}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);border-radius:13px;background:var(--paper);overflow:hidden}
+.card .hd{padding:10px 13px;font-weight:800;font-size:13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.card .bd{padding:13px}.tag{font-family:var(--mono);font-size:9.5px;font-weight:800;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.tag.a{background:var(--blue-b);color:var(--blue);border:1px solid var(--blue)}
+.tag.b{background:var(--purple-b);color:var(--purple);border:1px solid var(--purple)}
+.tag.c{background:var(--green-b);color:var(--green);border:1px solid var(--green)}
+.tag.d{background:var(--red-b);color:var(--red);border:1px solid var(--red)}
+.tag.e{background:var(--orange-b);color:var(--orange);border:1px solid var(--orange)}
+.tag.f{background:var(--teal-b);color:var(--teal);border:1px solid var(--teal)}
+.flow{display:flex;flex-direction:column;gap:5px}
+.fn{font-size:11.8px;line-height:1.35;padding:7px 9px;border-radius:7px;border:1px solid var(--line2);background:var(--paper);color:var(--ink);text-align:center}
+.fn.blue{border-color:var(--blue);background:var(--blue-b);color:var(--blue);font-weight:750}
+.fn.purple{border-color:var(--purple);background:var(--purple-b);color:var(--purple);font-weight:750}
+.fn.green{border-color:var(--green);background:var(--green-b);color:var(--green);font-weight:750}
+.fn.red{border-color:var(--red);background:var(--red-b);color:var(--red);font-weight:750}
+.fn.orange{border-color:var(--orange);background:var(--orange-b);color:var(--orange);font-weight:750}
+.fn.teal{border-color:var(--teal);background:var(--teal-b);color:var(--teal);font-weight:750}
+.fn small{display:block;margin-top:2px;font-size:9.5px;font-weight:450;color:inherit;opacity:.85}.dn{text-align:center;color:var(--line2);font-size:14px;line-height:1}
+.figidx{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:800;background:var(--soft);border:1px solid var(--line2);color:var(--ink3);border-radius:999px;padding:1px 9px;margin:6px 0 2px}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}.legend span{font-family:var(--mono);font-size:9.5px;padding:3px 8px;border-radius:999px;border:1px solid var(--line)}
+.roadmap{display:grid;grid-template-columns:1fr;gap:9px;margin:14px 0}.lane{display:grid;grid-template-columns:170px 1fr;gap:12px;align-items:center}
+@media(max-width:720px){.lane{grid-template-columns:1fr}}
+.lname{font-family:var(--mono);font-size:11px;font-weight:800}.track{position:relative;height:44px;background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:7px;display:flex;align-items:center;gap:7px;overflow-x:auto}
+.pill{font-size:11px;font-weight:750;border-radius:7px;padding:5px 8px;white-space:nowrap;border:1px solid var(--line2)}
+.p-blue{background:var(--blue-b);color:var(--blue);border-color:var(--blue)}.p-purple{background:var(--purple-b);color:var(--purple);border-color:var(--purple)}
+.p-green{background:var(--green-b);color:var(--green);border-color:var(--green)}.p-red{background:var(--red-b);color:var(--red);border-color:var(--red)}
+.p-orange{background:var(--orange-b);color:var(--orange);border-color:var(--orange)}.p-teal{background:var(--teal-b);color:var(--teal);border-color:var(--teal)}
+ul{margin:7px 0 14px;padding-left:21px}li{margin:6px 0;font-size:14px;color:var(--ink2)}
+pre{background:#0F1B17;color:#C8E6D9;border-radius:10px;padding:14px 16px;font-size:12.5px;line-height:1.6;overflow-x:auto;font-family:var(--mono);margin:12px 0;border:1px solid var(--line)}
+a{color:var(--acc-ink);text-decoration:none}a:hover{text-decoration:underline}
+.warn{margin-top:32px;font-size:12px;color:var(--ink3);font-family:var(--mono);border-top:1px solid var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+<div class="doc">
+  <p class="kicker">Embodied RL · Safe Navigation · Quadruped</p>
+  <h1>RL Navigation Policy 增强路线图</h1>
+  <p class="sub">从 NavRL 的“Policy + Safety Shield”，到 SEA-Nav、VOP-Nav、ABS/BAS、REASAN 与预测/风险建模：一张图看懂 RL 避障如何继续演化</p>
+  <div class="meta">
+    <span>主线：NavRL → Safety / Prediction / Memory / Risk / Sampling</span>
+    <span>关注接口：感知 → RL Policy → [vx, vy, ωyaw] → 低层运动控制</span>
+  </div>
+
+  <div class="vision">
+    <p>核心结论：近两年的改进重点已经不再只是“换一个 PPO / Actor”，而是在 RL Policy 周围增加<strong>安全先验、未来预测、风险判断、时序记忆和高价值危险样本</strong>。NavRL 是一个强基线；SEA-Nav、VOP-Nav、ABS/BAS、REASAN 等工作，本质上是在不同位置补齐它的短板。</p>
+  </div>
+
+  <h2><span class="n">01</span>先看 NavRL：为什么它这么适合作为 Base</h2>
+  <p>NavRL 的接口非常干净：上层感知与目标信息进入 RL Policy，Policy 输出速度命令，再由安全模块做最终过滤。对于四足机器人，这种结构很容易迁移成 <code>[vx, vy, ωyaw]</code> 的“具身小脑”接口。</p>
+  <div class="figidx">图 01-1 · NavRL 基础链路</div>
+  <div class="card">
+    <div class="hd">NavRL · Reactive Policy + Post Safety Shield <span class="tag a">Strong Baseline</span></div>
+    <div class="bd"><div class="flow">
+      <div class="fn">Robot State + Goal + Obstacle Representation</div><div class="dn">↓</div>
+      <div class="fn blue">RL Navigation Policy<small>负责朝目标推进、绕开常规障碍</small></div><div class="dn">↓</div>
+      <div class="fn">Nominal Velocity Command<small>[vx, vy, ω]</small></div><div class="dn">↓</div>
+      <div class="fn red">VO-like Safety Shield<small>部署阶段最后检查/修正危险动作</small></div><div class="dn">↓</div>
+      <div class="fn green">Low-level Locomotion Controller</div>
+    </div></div>
+  </div>
+
+  <div class="callout risk"><div class="ct">为什么 NavRL(2T) 看起来特别强</div><p><b>2T 不是新模型，而是给 NavRL 两倍 episode 时间。</b>这说明 NavRL 的典型问题不是完全不会避障，而是更容易“安全但保守”，在复杂场景中可能用更长时间才完成任务。因此后续工作往往围绕“如何在不牺牲安全的前提下更早预判、更敢走、更少冻结”来做增强。</p></div>
+
+  <h2><span class="n">02</span>RL Policy 周围的 6 条主流增强路线</h2>
+  <div class="grid">
+    <div class="card"><div class="hd">A · Policy 后加硬安全层 <span class="tag a">Post Filter</span></div><div class="bd"><div class="flow">
+      <div class="fn blue">RL Policy</div><div class="dn">↓</div><div class="fn red">VO / CBF / Reachability Filter</div><div class="dn">↓</div><div class="fn green">Safe Command</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：NavRL、One Filter to Deploy Them All。优点是模块化；缺点是容易产生训练-部署不一致。</p></div></div>
+
+    <div class="card"><div class="hd">B · 把安全约束放进训练 <span class="tag b">Joint Train</span></div><div class="bd"><div class="flow">
+      <div class="fn blue">Actor</div><div class="dn">↓</div><div class="fn purple">Differentiable Safety Layer</div><div class="dn">↓</div><div class="fn green">Safe Action + Auxiliary Loss</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：SEA-Nav。核心是让安全修正成为训练计算图的一部分，而不是只在部署阶段“偷偷改动作”。</p></div></div>
+
+    <div class="card"><div class="hd">C · Policy 前加入未来预测 <span class="tag c">Foresight</span></div><div class="bd"><div class="flow">
+      <div class="fn">Multi-frame LiDAR / Depth</div><div class="dn">↓</div><div class="fn teal">Future Risk / Safe Velocity Predictor</div><div class="dn">↓</div><div class="fn blue">RL Policy</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：VOP-Nav、Anticipatory Risk-Guided RL。不是等动作出来再纠错，而是先告诉 Policy“未来哪里危险”。</p></div></div>
+
+    <div class="card"><div class="hd">D · 学一个 Risk / Safety Policy <span class="tag d">Risk Switch</span></div><div class="bd"><div class="flow">
+      <div class="fn blue">Agile / Navigation Policy</div><div class="dn">↓</div><div class="fn red">Risk Critic / Safety-Shield RL</div><div class="dn">↓</div><div class="fn green">Recovery / Safe Command</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：ABS、BAS、REASAN。把“是否危险 / 如何恢复”也交给学习模块，而不是纯几何规则。</p></div></div>
+
+    <div class="card"><div class="hd">E · 给 Policy 更强时序记忆 <span class="tag e">Memory</span></div><div class="bd"><div class="flow">
+      <div class="fn">Observation History + Odometry</div><div class="dn">↓</div><div class="fn orange">SRU / Predictive Latent Memory</div><div class="dn">↓</div><div class="fn blue">RL Policy</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：SRU、Predictive Training with Latent Imagination。让策略不仅“看现在”，还记住空间关系并形成预测性内部状态。</p></div></div>
+
+    <div class="card"><div class="hd">F · 改训练采样方式 <span class="tag f">Hard Samples</span></div><div class="bd"><div class="flow">
+      <div class="fn">RL Policy</div><div class="dn">↕</div><div class="fn teal">Critical Replay / Adversarial Obstacle</div><div class="dn">↓</div><div class="fn">更多高风险样本</div>
+    </div><p style="margin-top:10px;font-size:13px;color:var(--ink2)">代表：SEA-Nav ACSI、Hi-QARL。重点不是改网络，而是让 RL 真正见过“最危险、最难学”的状态。</p></div></div>
+  </div>
+
+  <h2><span class="n">03</span>代表论文：每篇到底在 RL Policy 的哪里加东西</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>方法</th><th>增强位置</th><th>新增模块</th><th>主要解决问题</th><th>部署时额外开销</th></tr></thead>
+    <tbody>
+      <tr><td class="k">NavRL</td><td>Policy 后</td><td>VO-like Safety Shield</td><td>减少危险动作、提升碰撞安全</td><td>中</td></tr>
+      <tr><td class="k">One Filter</td><td>Policy 后</td><td>Reachability Safety Value + Filter</td><td>更通用的安全过滤、未知环境/动力学扰动</td><td>中</td></tr>
+      <tr><td class="k">SEA-Nav</td><td>Policy 内/后</td><td>LSE-CBF + Shield Loss + ACSI</td><td>解决后处理 Safety Filter 的 credit mismatch，并增强危险状态学习</td><td>中</td></tr>
+      <tr><td class="k">VOP-Nav</td><td>Policy 前</td><td>VOP-Net</td><td>从多帧 LiDAR 直接预测未来安全速度区域</td><td>中</td></tr>
+      <tr><td class="k">ABS</td><td>Policy 旁边</td><td>RA Value + Recovery Policy</td><td>高速运动下判断何时必须安全接管</td><td>中</td></tr>
+      <tr><td class="k">BAS</td><td>ABS 基础上</td><td>Physics Estimator</td><td>摩擦、负载等动力学变化下自适应安全边界</td><td>中</td></tr>
+      <tr><td class="k">REASAN</td><td>Policy 后</td><td>Learned Safety-Shield RL</td><td>不用纯几何规则，直接学习复杂动态避障修正</td><td>中-高</td></tr>
+      <tr><td class="k">Omni-Perception</td><td>Policy 前</td><td>PD-RiskNet</td><td>直接从时序 LiDAR 提取全向动态风险特征</td><td>中</td></tr>
+      <tr><td class="k">SRU</td><td>Policy 内</td><td>Spatial Recurrent Unit</td><td>长距离 mapless 导航的空间记忆</td><td>低-中</td></tr>
+      <tr><td class="k">SRU-WM</td><td>训练时</td><td>Latent Predictor</td><td>让隐状态具有未来预测能力，部署时可删除 predictor</td><td>低</td></tr>
+      <tr><td class="k">Hi-QARL</td><td>训练环境</td><td>Adversarial Obstacle Curriculum</td><td>主动制造更强动态危险样本</td><td>部署无新增</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="n">04</span>VOP-Nav 为什么很值得关注：从“预测障碍”转向“预测动作风险”</h2>
+  <p>传统动态避障链路通常很长：检测人 → 跟踪人 → 估计速度 → 预测未来轨迹 → 再做 VO/MPC。VOP-Nav 的关键转变是：<strong>不一定要把每个人未来在哪预测得很准，只需要预测哪些速度对机器人来说是危险的。</strong></p>
+  <div class="figidx">图 04-1 · 两种预测范式</div>
+  <div class="grid">
+    <div class="card"><div class="hd">传统显式世界预测 <span class="tag a">World Model</span></div><div class="bd"><div class="flow">
+      <div class="fn">LiDAR / RGB-D</div><div class="dn">↓</div><div class="fn">Detection</div><div class="dn">↓</div><div class="fn">Tracking</div><div class="dn">↓</div><div class="fn">Velocity / Trajectory Prediction</div><div class="dn">↓</div><div class="fn red">VO / MPC / Planner</div>
+    </div></div></div>
+    <div class="card"><div class="hd">VOP-Nav 式任务相关预测 <span class="tag c">Action Risk</span></div><div class="bd"><div class="flow">
+      <div class="fn">Multi-frame LiDAR</div><div class="dn">↓</div><div class="fn teal">VOP-Net</div><div class="dn">↓</div><div class="fn green">Safe Velocity Region</div><div class="dn">↓</div><div class="fn blue">RL Policy</div>
+    </div></div></div>
+    <div class="card"><div class="hd">Latent Prediction 路线 <span class="tag e">Deploy-Light</span></div><div class="bd"><div class="flow">
+      <div class="fn">Observation</div><div class="dn">↓</div><div class="fn orange">Predictive Latent Memory</div><div class="dn">↓</div><div class="fn blue">RL Policy</div><div class="dn">↓</div><div class="fn">部署时 Predictor 可移除</div>
+    </div></div></div>
+  </div>
+
+  <div class="callout new"><div class="ct">关键启发</div><p><b>未来预测不一定要预测“世界本身”，也可以直接预测“对动作决策有用的量”。</b>典型选择包括：未来安全速度区域、未来 collision risk map、未来 latent state。对于具身小脑，这往往比完整 reconstruct 世界更轻、更直接。</p></div>
+
+  <h2><span class="n">05</span>SEA-Nav：Safety 不只做后处理，还要参与 RL 学习</h2>
+  <div class="figidx">图 05-1 · 从 Post-Filter 到 Joint Training</div>
+  <div class="grid">
+    <div class="card"><div class="hd">NavRL 式 <span class="tag a">After Policy</span></div><div class="bd"><div class="flow">
+      <div class="fn blue">RL Policy</div><div class="dn">↓</div><div class="fn">Nominal Action</div><div class="dn">↓</div><div class="fn red">Safety Shield</div><div class="dn">↓</div><div class="fn green">Executed Action</div>
+    </div></div></div>
+    <div class="card"><div class="hd">SEA-Nav 式 <span class="tag b">In Training</span></div><div class="bd"><div class="flow">
+      <div class="fn blue">Actor</div><div class="dn">↓</div><div class="fn purple">LSE-CBF Safety Layer</div><div class="dn">↓</div><div class="fn green">Safe Action</div><div class="dn">↑</div><div class="fn orange">Shield / Regularization Loss</div>
+    </div></div></div>
+    <div class="card"><div class="hd">SEA-Nav ACSI <span class="tag f">Sampling</span></div><div class="bd"><div class="flow">
+      <div class="fn">Collision / Near-risk State</div><div class="dn">↓</div><div class="fn teal">Replay Critical State</div><div class="dn">↓</div><div class="fn">在危险边界附近反复练习</div>
+    </div></div></div>
+  </div>
+  <p>SEA-Nav 的价值不只是“把 CBF 换成可导版本”，更重要的是同时处理了三个问题：安全约束如何进入训练、危险动作如何被 Policy 自己学会避免、以及危险区域样本如何更高效地采到。</p>
+
+  <h2><span class="n">06</span>ABS → BAS：Risk Network 路线</h2>
+  <div class="figidx">图 06-1 · Agile Policy 与 Safety Recovery 的并行结构</div>
+  <div class="card"><div class="hd">ABS / BAS · Risk-aware Switching <span class="tag d">Safety Critic</span></div><div class="bd"><div class="flow">
+    <div class="fn blue">Agile Policy<small>目标推进 / 高速动作</small></div><div class="dn">↓</div>
+    <div class="fn red">RA Value / Risk Critic<small>判断继续执行是否会进入危险状态</small></div><div class="dn">↓</div>
+    <div class="fn">Safe → Agile ／ Unsafe → Recovery</div><div class="dn">↓</div>
+    <div class="fn orange">BAS 额外加入 Physics Estimator<small>让安全判断随摩擦、payload、动力学变化而自适应</small></div>
+  </div></div></div>
+  <p>这条路线很适合回答一个不同于 CBF 的问题：<strong>“是不是应该让主策略尽量敏捷，再额外学一个风险判断器来决定什么时候必须接管？”</strong></p>
+
+  <h2><span class="n">07</span>REASAN：把 Safety Shield 本身也变成 RL</h2>
+  <div class="card"><div class="hd">REASAN · Learned Safety Shield <span class="tag d">RL-on-RL</span></div><div class="bd"><div class="flow">
+    <div class="fn">Goal + LiDAR / Perception</div><div class="dn">↓</div><div class="fn blue">Navigation RL</div><div class="dn">↓</div><div class="fn">[vx, vy, ω] nominal</div><div class="dn">↓</div><div class="fn red">Safety-Shield RL</div><div class="dn">↓</div><div class="fn green">safe [vx, vy, ω]</div><div class="dn">↓</div><div class="fn">Locomotion Policy → Joint Control</div>
+  </div></div></div>
+  <div class="callout info"><div class="ct">与 CBF/VO 的根本差异</div><p>VO / CBF 把“安全”写成几何或控制规则；REASAN 则让另一个 Policy 自己从大量交互中学会修正危险动作。它更灵活，但也意味着 Safety 本身不再是一个显式数学约束。</p></div>
+
+  <h2><span class="n">08</span>Memory / Risk Perception：Policy 前端也可以继续升级</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>方向</th><th>代表</th><th>输入变化</th><th>Policy 得到的新能力</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Spatial Memory</td><td>SRU</td><td>Observation history + odometry</td><td>知道“过去看到的障碍在空间上大概在哪”，减少单帧反应性</td></tr>
+      <tr><td class="k">Predictive Latent</td><td>SRU-WM</td><td>历史观测 + 训练期 latent predictor</td><td>内部状态不仅记忆，还带未来预测性；部署开销可很低</td></tr>
+      <tr><td class="k">Risk Perception</td><td>Omni-Perception</td><td>时序 raw LiDAR / point cloud</td><td>直接抽取近场、远场和动态风险，不依赖手工 tracking pipeline</td></tr>
+      <tr><td class="k">Explicit Action Foresight</td><td>VOP-Nav</td><td>历史 LiDAR</td><td>预测未来安全速度区域，提前告诉 Policy 哪些动作危险</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="n">09</span>训练数据本身：为什么“高质量危险样本”越来越重要</h2>
+  <p>很多 RL 避障失败，并不是 Policy 容量不够，而是训练中真正危险的状态出现概率太低。于是近年的另一个趋势是：专门设计危险状态采样。</p>
+  <div class="grid">
+    <div class="card"><div class="hd">SEA-Nav · ACSI <span class="tag f">Critical Replay</span></div><div class="bd"><p style="font-size:13px;color:var(--ink2)">碰撞或接近碰撞后，不是随机重置，而是回到碰撞前的高价值状态重复练习。</p></div></div>
+    <div class="card"><div class="hd">Hi-QARL <span class="tag f">Adversarial</span></div><div class="bd"><p style="font-size:13px;color:var(--ink2)">让动态障碍自己成为对手，通过 curriculum 从“弱敌人”逐渐升级到“会主动堵你/撞你”的强敌人。</p></div></div>
+    <div class="card"><div class="hd">传统随机障碍 <span class="tag a">Baseline</span></div><div class="bd"><p style="font-size:13px;color:var(--ink2)">实现简单，但大量样本其实是低风险、低信息量状态，学习效率有限。</p></div></div>
+  </div>
+
+  <h2><span class="n">10</span>一张图看懂：从 NavRL 向外扩展</h2>
+  <div class="roadmap">
+    <div class="lane"><div class="lname">Policy 后 · Safety</div><div class="track"><span class="pill p-blue">NavRL · VO Shield</span><span>→</span><span class="pill p-red">One Filter · Reachability</span><span>→</span><span class="pill p-purple">SEA-Nav · Differentiable CBF</span></div></div>
+    <div class="lane"><div class="lname">Policy 前 · Prediction</div><div class="track"><span class="pill p-teal">VOP-Nav · Safe Velocity Prediction</span><span>→</span><span class="pill p-orange">Future Risk Map</span><span>→</span><span class="pill p-orange">Latent Prediction</span></div></div>
+    <div class="lane"><div class="lname">Policy 旁 · Risk</div><div class="track"><span class="pill p-red">ABS · RA Value</span><span>→</span><span class="pill p-orange">BAS · Physics-aware RA</span><span>→</span><span class="pill p-red">REASAN · Learned Safety RL</span></div></div>
+    <div class="lane"><div class="lname">Policy 内 · Memory</div><div class="track"><span class="pill p-orange">LSTM / GRU</span><span>→</span><span class="pill p-orange">SRU · Spatial Memory</span><span>→</span><span class="pill p-teal">SRU-WM · Predictive Memory</span></div></div>
+    <div class="lane"><div class="lname">Training · Sampling</div><div class="track"><span class="pill p-blue">Random Obstacles</span><span>→</span><span class="pill p-teal">SEA ACSI</span><span>→</span><span class="pill p-teal">Hi-QARL Adversary</span></div></div>
+  </div>
+
+  <h2><span class="n">11</span>对“感知在环 RL 小脑”的推荐组合</h2>
+  <div class="vision"><p>如果目标是：输入多帧 Ray/LiDAR + Robot State + Goal，输出 <code>[vx, vy, ωyaw]</code>，同时兼顾动态避障与复杂场景，我更推荐把“预测、RL、安全约束、危险采样”视为四个互补层，而不是四选一。</p></div>
+  <pre>Multi-frame Ray / LiDAR
+        ↓
+Spatio-temporal Encoder
+        ↓
+Future Risk / Safe Velocity Prediction   ← VOP-Nav / SRU-WM
+        ↓
+Navigation RL Policy
+        ↓
+Differentiable Safety Constraint         ← SEA-Nav
+        ↓
+[vx, vy, ωyaw]
+        ↓
+Low-level Locomotion
+
+Training:
++ Critical State Replay                  ← SEA-Nav ACSI
++ Dynamic Obstacle Curriculum            ← Hi-QARL</pre>
+  <div class="callout new"><div class="ct">为什么这个组合比“再加一个 CBF”更有研究价值</div><p><b>VOP 类模块解决“提前看见危险”</b>；<b>SEA-Nav 类安全层解决“最终动作不要越过安全边界”</b>；<b>ACSI/Hi-QARL 解决“训练时到底有没有真正见过危险”</b>。三个模块针对的是三个不同瓶颈，因此可以组合，而不是相互替代。</p></div>
+
+  <h2><span class="n">12</span>建议精读顺序</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>优先级</th><th>论文</th><th>你应该重点看什么</th></tr></thead>
+    <tbody>
+      <tr><td class="k">S</td><td>VOP-Nav</td><td>未来安全速度区域如何表示、如何进入 Policy 输入与 reward、为什么比显式 tracking 更直接</td></tr>
+      <tr><td class="k">S</td><td>SEA-Nav</td><td>LSE-CBF 如何可导、Shield loss、ACSI、为什么比 post-processing 更适合 joint training</td></tr>
+      <tr><td class="k">S</td><td>Predictive Training with Latent Imagination</td><td>预测分支只在训练用、部署删除；如何让隐状态具备前瞻能力</td></tr>
+      <tr><td class="k">A</td><td>One Filter to Deploy Them All</td><td>通用 safety filter / reachability value，适合理解“完全不改 Policy”的路线</td></tr>
+      <tr><td class="k">A</td><td>Omni-Perception</td><td>时序 LiDAR 风险表示，适合“感知在环小脑”的前端设计</td></tr>
+      <tr><td class="k">A</td><td>BAS</td><td>ABS 的 physics-aware 扩展，理解动力学变化如何改变安全边界</td></tr>
+      <tr><td class="k">B</td><td>Hi-QARL</td><td>训练环境如何主动制造高价值动态危险样本</td></tr>
+      <tr><td class="k">B</td><td>SRU</td><td>长距离 mapless navigation 的空间记忆机制</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2><span class="n">13</span>论文链接</h2>
+  <ul>
+    <li><a href="https://arxiv.org/abs/2409.15634" target="_blank">NavRL</a></li>
+    <li><a href="https://arxiv.org/abs/2603.09460" target="_blank">SEA-Nav</a></li>
+    <li><a href="https://arxiv.org/abs/2607.15036" target="_blank">VOP-Nav</a></li>
+    <li><a href="https://arxiv.org/abs/2401.17583" target="_blank">ABS</a></li>
+    <li><a href="https://arxiv.org/abs/2501.04276" target="_blank">BAS</a></li>
+    <li><a href="https://arxiv.org/abs/2512.09537" target="_blank">REASAN</a></li>
+    <li><a href="https://arxiv.org/abs/2412.09989" target="_blank">One Filter to Deploy Them All</a></li>
+    <li><a href="https://arxiv.org/abs/2505.19214" target="_blank">Omni-Perception</a></li>
+    <li><a href="https://arxiv.org/abs/2503.11467" target="_blank">Hi-QARL</a></li>
+    <li><a href="https://arxiv.org/abs/2607.17574" target="_blank">Predictive Training with Latent Imagination</a></li>
+  </ul>
+
+  <div class="warn">注：本文是面向“RL 避障 / 具身小脑”技术路线的结构化阅读笔记，不把所有工作简单归为“CBF vs 非 CBF”，而是按 Policy 前 / Policy 内 / Policy 后 / Risk Branch / Training Sampling 五个位置重新整理。</div>
+</div>
+</body>
+</html>
