@@ -19,12 +19,52 @@ s_t → Actor 采样 a_t → 环境返回 r_t、s_{t+1}、done
 
 Actor 表示策略 $\pi_\theta(a|s)$，Critic 可以表示状态价值 $V_\phi(s)$ 或动作价值 $Q_\phi(s,a)$。基础 Actor-Critic 用 TD error 作为反馈：
 
-$$\delta_t=r_t+\gamma(1-d_t)V_\phi(s_{t+1})-V_\phi(s_t)$$
+$$
+\delta_t=r_t+\gamma(1-d_t)V_\phi(s_{t+1})-V_\phi(s_t)
+$$
+
+这里可以把它拆成两部分来理解：
+
+$$
+\underbrace{r_t+\gamma(1-d_t)V_\phi(s_{t+1})}_{\text{这一步之后的目标分数}}
+-
+\underbrace{V_\phi(s_t)}_{\text{Critic 原本对当前状态的预估}}
+$$
+
+其中：
+
+- $r_t$ 是当前这一步拿到的即时奖励。
+- $\gamma \in [0,1)$ 是折扣因子，表示“未来奖励现在值多少钱”。
+- $d_t$ 是终止标记，终止时 $d_t=1$，此时不再使用下一状态价值 bootstrap。
+- $V_\phi(s_{t+1})$ 是 Critic 对下一状态未来总回报的估计。
 
 $\delta_t>0$ 表示结果超出预期，增加该动作的概率；$\delta_t<0$ 则降低概率。对应的目标为：
 
-$$y_t=r_t+\gamma(1-d_t)V_\phi(s_{t+1}),\quad L_V=(V_\phi(s_t)-y_t)^2$$
-$$L_\pi=-\log\pi_\theta(a_t|s_t)\,\delta_t$$
+$$
+y_t=r_t+\gamma(1-d_t)V_\phi(s_{t+1})
+$$
+
+$$
+L_V=(V_\phi(s_t)-y_t)^2
+$$
+
+$$
+L_\pi=-\log\pi_\theta(a_t|s_t)\,\delta_t
+$$
+
+这三条式子分别对应三件事：
+
+- $y_t$ 是 Critic 想追上的 TD 目标。
+- $L_V$ 让 Critic 的估计尽量接近这个目标。
+- $L_\pi$ 让 Actor 在 $\delta_t>0$ 时增大当前动作概率，在 $\delta_t<0$ 时减小当前动作概率。
+
+如果把一整条轨迹的真实回报写出来，就是：
+
+$$
+G_t=r_t+\gamma r_{t+1}+\gamma^2 r_{t+2}+\cdots
+$$
+
+而 TD 方法的核心，就是不用等完整的 $G_t$ 都出现，先用 $V_\phi(s_{t+1})$ 来近似后半段，这样更新更快、方差更小。
 
 `terminated` 才表示真正终止；`truncated`（时间上限）通常仍需 bootstrap。
 
@@ -71,13 +111,46 @@ A2C 把“动作好不好”改成“这个动作比当前状态的平均水平�
 
 把它想成教练带一组学员练习：学员先各自走一小段路，教练不在每一步都打断，而是等大家走完几步后统一点评。“这位学员这次表现比他平时水平好多少”就是 advantage。这样一次看一批样本，偶然的好坏不会马上决定策略，训练更平稳。
 
-A2C（Advantage Actor-Critic）用 $A_t=R_t-V(s_t)$ 表示相对优势。它先收集一批数据再更新，因此流程是连续的：
+A2C（Advantage Actor-Critic）常用 $A_t=R_t-V(s_t)$ 表示相对优势。经典写法里可以用 $n$ 步 return，也可以像很多现代实现那样使用 GAE；下文采用的是工程里很常见的 GAE 版本。它先收集一批数据再更新，因此流程是连续的：
+
+更细一点写，A2C 里常用的几组量分别是：
+
+$$
+\delta_t=r_t+\gamma(1-d_t)V(s_{t+1})-V(s_t)
+$$
+
+$$
+A_t^{\mathrm{GAE}(\gamma,\lambda)}=\delta_t+\gamma\lambda(1-d_t)A_{t+1}^{\mathrm{GAE}}
+$$
+
+把递推式继续展开，就得到更直观的形式：
+
+$$
+A_t^{\mathrm{GAE}(\gamma,\lambda)}
+=
+\delta_t
++\gamma\lambda(1-d_t)\delta_{t+1}
++(\gamma\lambda)^2(1-d_t)(1-d_{t+1})\delta_{t+2}
++\cdots
+$$
+
+最后再用 advantage 还原 return：
+
+$$
+R_t=A_t+V(s_t)
+$$
+
+这组公式的直觉是：
+
+- $\delta_t$ 看的是“当前这一步有没有比预期更好”。
+- $A_t$ 把后续几步的 TD 误差也折回来，得到更平滑的优势估计。
+- $R_t$ 则是给 Critic 学习用的回报目标。
 
 把这 5 步展开来看：
 
 1. **先收集，不急着改参数**：每个环境按当前 Actor 行动，把沿途的状态、动作和奖励记下来。此时所有样本都来自同一个“旧版本”策略，方便公平比较。
 2. **给最后一个状态估个分**：如果走了 $T$ 步还没到终点，就用 $V(s_T)$ 猜后面还能拿多少分；如果真的结束，后面价值就是 0。
-3. **从后往前算总成绩**：越靠后的动作越容易判断，先算最后一步，再把结果传回前面，这得到 $R_t$。用 $R_t-V(s_t)$ 就知道每个动作是否超出教练预期。
+3. **从后往前回传评价**：越靠后的动作越容易判断，先算最后一步的 TD 误差，再逐步向前累计，得到 $A_t$；随后再由 $R_t=A_t+V(s_t)$ 还原出给 Critic 用的 return。
 4. **统一批改作业**：把 advantage 做标准化，避免某一批奖励特别大导致参数抖动，然后一次性更新 Actor 和 Critic。
 5. **扔掉这批数据再来一轮**：Actor 已经变了，旧数据不再完全代表新策略，所以 A2C 通常不会反复使用它。
 
@@ -103,6 +176,13 @@ loss = policy_loss + value_coef * value_loss - entropy_coef * dist.entropy().mea
 
 `λ=0` 接近单步 TD，`λ=1` 接近完整回报，常用 `0.95`。A2C 的 rollout 通常只使用一次。
 
+更精确地说：
+
+- 当 $\lambda=0$ 时，$A_t$ 基本只看当前一步的 $\delta_t$，偏差可能更大，但方差较小。
+- 当 $\lambda\to1$ 时，$A_t$ 会吸收更长时间范围的信息，更接近 Monte Carlo 回报，偏差更小，但方差更大。
+
+所以 GAE 实际上在做一个偏差和方差之间的折中。
+
 ## 3. PPO：A2C 流程上加“安全带”
 
 普通策略梯度可能因为一次偶然的“大惊喜”把动作概率从 0.2 直接推到 0.9，随后状态分布改变，Critic 也会失真。PPO 不禁止更新，只限制新旧策略的变化幅度。
@@ -121,7 +201,23 @@ A2C 的批量流程不变。PPO 采样时保存 `old_log_prob`，更新时比较
 ```
 
 $$r_t(\theta)=\frac{\pi_\theta(a_t|s_t)}{\pi_{old}(a_t|s_t)}$$
-$$L^{CLIP}=\min(r_tA_t,\operatorname{clip}(r_t,1-\epsilon,1+\epsilon)A_t)$$
+
+$$
+L_t^{CLIP}(\theta)=\min\Big(r_t(\theta)A_t,\operatorname{clip}(r_t(\theta),1-\epsilon,1+\epsilon)A_t\Big)
+$$
+
+训练时真正最大化的一般是整批样本的期望：
+
+$$
+\mathcal{L}^{CLIP}(\theta)=\mathbb{E}_t\left[L_t^{CLIP}(\theta)\right]
+$$
+
+这条式子最好分正负 advantage 两种情况看：
+
+- 如果 $A_t>0$，说明这个动作比预期好，希望把它概率变大，但最多放大到 $1+\epsilon$ 附近。
+- 如果 $A_t<0$，说明这个动作偏差，希望把它概率变小，但最多缩小到 $1-\epsilon$ 附近。
+
+因此 clip 的作用不是“让策略不学习”，而是“别一次学过头”。
 
 下面是 PPO 的伪代码：
 
@@ -148,7 +244,7 @@ $A_t>0$ 时鼓励动作但限制增幅，$A_t<0$ 时抑制动作但限制降幅�
 
 它像开了很多间练习室：每间房里都有一个“分身教练”和一台机器人。每个分身练几步就把心得写回总教练，其他房间不用等它。总教练因此能更快收到各种场景的反馈，但某个分身拿到的教材可能已经旧了一点，这就是 stale gradient。
 
-A3C 的公式与 A2C 基本相同，变化是多个 worker 何时更新全局网络：
+A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，而不是必须使用 GAE。这里为了统一记号，仍沿用前面的 advantage/return 视角来解释它的数据流；真正的区别在于多个 worker 何时更新全局网络：
 
 ```text
 全局 Actor-Critic → 复制给多个 worker
@@ -185,6 +281,35 @@ A3C 的公式与 A2C 基本相同，变化是多个 worker 何时更新全局网
 
 $$L_Q=(Q_\phi(s,a)-y)^2,\quad L_\pi=-Q_\phi(s,\mu_\theta(s))$$
 
+把 DDPG 的目标写完整一点就是：
+
+$$
+y_t=r_t+\gamma(1-d_t)Q_{\phi'}\big(s_{t+1},\mu_{\theta'}(s_{t+1})\big)
+$$
+
+$$
+L_Q=\mathbb{E}_{(s_t,a_t,r_t,s_{t+1})\sim\mathcal{D}}\left[\big(Q_\phi(s_t,a_t)-y_t\big)^2\right]
+$$
+
+$$
+L_\pi=-\mathbb{E}_{s_t\sim\mathcal{D}}\left[Q_\phi\big(s_t,\mu_\theta(s_t)\big)\right]
+$$
+
+这里的关键点是：
+
+- $\mathcal{D}$ 表示 Replay Buffer 中的数据分布。
+- 目标动作由 target Actor $\mu_{\theta'}$ 产生，而不是当前在线 Actor。
+- 目标 Q 值由 target Critic $Q_{\phi'}$ 给出，因此目标更稳定。
+
+软更新通常写成：
+
+$$
+  heta'\leftarrow \tau\theta+(1-\tau)\theta',\qquad
+\phi'\leftarrow \tau\phi+(1-\tau)\phi'
+$$
+
+$\tau$ 往往很小，例如 $0.005$，表示目标网络只缓慢跟随在线网络。
+
 Actor 本身不随机，训练动作必须加入高斯或 OU 噪声。DDPG 对 Critic 高估和噪声较敏感，实际项目常优先使用 TD3 或 SAC。
 
 整轮更新的直觉是：先用目标网络估算“这一步之后最多还能拿多少分”，把它当成标准答案；Critic 对照标准答案改进，Actor 再根据 Critic 的方向微调动作。最后只把目标网络向在线网络靠近一点点，下一轮的标准答案就不会突然跳变。
@@ -212,7 +337,32 @@ SAC 仍从 Replay Buffer 采样，但 Actor 输出随机分布，两个 Critic �
 
 这条流程中最容易迷糊的是 `log_prob`：它表示“Actor 认为自己刚才这个动作有多常见”。动作越少见，熵奖励越大，SAC 就越愿意保留探索；动作虽然得分高但过于单一时，熵项会提醒 Actor 不要立刻把其他可能性全部删掉。等训练充分后，Q 值的作用逐渐占主导，策略才会稳定下来。
 
-$$L_\pi=\mathbb E[\alpha\log\pi_\theta(a|s)-\min_jQ_{\phi_j}(s,a)]$$
+SAC 的 Critic 目标通常写成：
+
+$$
+y_t=r_t+\gamma(1-d_t)\left[\min_{j\in\{1,2\}}Q_{\phi'_j}(s_{t+1},a_{t+1})-\alpha\log\pi_\theta(a_{t+1}|s_{t+1})\right]
+$$
+
+其中 $a_{t+1}\sim\pi_\theta(\cdot|s_{t+1})$，也就是下一步动作是从当前随机策略里采样出来的。
+
+Actor 的优化目标是：
+
+$$
+L_\pi=\mathbb E_{s_t\sim\mathcal D,\, a_t\sim\pi_\theta}\left[\alpha\log\pi_\theta(a_t|s_t)-\min_jQ_{\phi_j}(s_t,a_t)\right]
+$$
+
+这条式子可以拆成两股力量：
+
+- $-\min_jQ_{\phi_j}(s_t,a_t)$ 鼓励选择高价值动作。
+- $\alpha\log\pi_\theta(a_t|s_t)$ 鼓励保留一定随机性，避免策略太早塌缩成单一动作。
+
+如果启用自动温度调节，还会再最小化一个温度损失：
+
+$$
+L_\alpha=\mathbb E_{a_t\sim\pi_\theta}\left[-\alpha\big(\log\pi_\theta(a_t|s_t)+\mathcal H_{target}\big)\right]
+$$
+
+它的作用是把策略熵推向目标熵 $\mathcal H_{target}$：熵太低就增大 $\alpha$，熵太高就减小 $\alpha$。不少实现会把可学习参数改成 $\log\alpha$ 来优化，损失写法会有等价变形，但优化目标的含义不变。
 
 高熵意味着保留更多探索；熵过低时自动增大 $\alpha$，熵过高时减小 $\alpha$，因此 SAC 通常比 DDPG 更稳。
 
