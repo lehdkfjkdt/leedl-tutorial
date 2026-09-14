@@ -200,17 +200,58 @@ A2C 的批量流程不变。PPO 采样时保存 `old_log_prob`，更新时比较
   → 丢弃 rollout，重新采样
 ```
 
+把 PPO 的训练流程翻成更标准的公式步骤，可以写成：
+
+1. 用旧策略 $\pi_{old}$ 采样，得到 rollout，并保存 $\log\pi_{old}(a_t|s_t)$。
+2. 由 rollout 计算 advantage $A_t$ 和 return $R_t$。
+3. 用当前策略 $\pi_\theta$ 重新计算这些旧动作在当前策略下的概率。
+4. 用概率比值 $r_t(\theta)$ 构造 clipped objective，更新 Actor。
+5. 用 $R_t$ 更新 Critic，并加入熵项保持探索。
+
 $$r_t(\theta)=\frac{\pi_\theta(a_t|s_t)}{\pi_{old}(a_t|s_t)}$$
+
+这个比值衡量的是：同一个历史动作 $a_t$，当前策略相对旧策略到底更想做，还是更不想做。
+
+- $r_t(\theta)>1$ 表示当前策略提高了该动作概率。
+- $r_t(\theta)<1$ 表示当前策略降低了该动作概率。
+- $r_t(\theta)=1$ 表示该动作概率没有变化。
 
 $$
 L_t^{CLIP}(\theta)=\min\Big(r_t(\theta)A_t,\operatorname{clip}(r_t(\theta),1-\epsilon,1+\epsilon)A_t\Big)
 $$
+
+这条式子的两项含义分别是：
+
+- $r_t(\theta)A_t$：不加限制时，普通策略梯度希望优化的方向。
+- $\operatorname{clip}(r_t(\theta),1-\epsilon,1+\epsilon)A_t$：人为给比例上限和下限后的保守版本。
+
+取两者较小值，就是为了防止策略朝同一个方向走得太猛。
 
 训练时真正最大化的一般是整批样本的期望：
 
 $$
 \mathcal{L}^{CLIP}(\theta)=\mathbb{E}_t\left[L_t^{CLIP}(\theta)\right]
 $$
+
+若写成工程里更常见的总损失形式，通常还会加上价值项和熵项：
+
+$$
+L^{PPO}=L_{policy}+c_vL_{value}-c_e\,\mathbb E_t\left[\mathcal H\big(\pi_\theta(\cdot|s_t)\big)\right]
+$$
+
+其中
+
+$$
+L_{policy}=-\mathbb E_t\left[L_t^{CLIP}(\theta)\right],\qquad
+L_{value}=\mathbb E_t\left[(V_\phi(s_t)-R_t)^2\right]
+$$
+
+这表示：
+
+- $L_{policy}$ 负责更新策略。
+- $L_{value}$ 负责让 Critic 逼近回报目标 $R_t$。
+- 熵项 $\mathcal H$ 用来防止动作分布过早塌缩。
+- $c_v$ 和 $c_e$ 是控制价值损失与熵奖励权重的超参数。
 
 这条式子最好分正负 advantage 两种情况看：
 
@@ -244,7 +285,7 @@ $A_t>0$ 时鼓励动作但限制增幅，$A_t<0$ 时抑制动作但限制降幅�
 
 它像开了很多间练习室：每间房里都有一个“分身教练”和一台机器人。每个分身练几步就把心得写回总教练，其他房间不用等它。总教练因此能更快收到各种场景的反馈，但某个分身拿到的教材可能已经旧了一点，这就是 stale gradient。
 
-A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，而不是必须使用 GAE。这里为了统一记号，仍沿用前面的 advantage/return 视角来解释它的数据流；真正的区别在于多个 worker 何时更新全局网络：
+A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，而不是必须使用 GAE。这里把它按更标准的 $n$ 步写法展开；真正的区别在于多个 worker 何时更新全局网络：
 
 ```text
 全局 Actor-Critic → 复制给多个 worker
@@ -254,6 +295,38 @@ A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，
   → 不等待其他 worker，异步把梯度应用到全局网络
   → 重新拉取全局参数并继续 rollout
 ```
+
+若某个 worker 从时刻 $t$ 开始向后运行了 $n$ 步，那么常见的 $n$ 步回报是：
+
+$$
+R_t^{(n)}=\sum_{k=0}^{n-1}\gamma^k r_{t+k}+\gamma^nV(s_{t+n})
+$$
+
+如果在第 $t+n$ 步之前 episode 已经终止，那么最后一项 bootstrap 价值直接记为 0。
+
+对应的 advantage 写成：
+
+$$
+A_t=R_t^{(n)}-V(s_t)
+$$
+
+于是策略损失和价值损失分别是：
+
+$$
+L_\pi=-\log\pi_\theta(a_t|s_t)A_t
+$$
+
+$$
+L_V=\big(V_\phi(s_t)-R_t^{(n)}\big)^2
+$$
+
+这几条式子的意思很直接：
+
+- $R_t^{(n)}$ 先累计接下来 $n$ 步的真实奖励，再拼接一个末端状态价值。
+- $A_t$ 判断当前动作相对状态基线 $V(s_t)$ 是否更好。
+- $L_\pi$ 用 advantage 更新 Actor，$L_V$ 用 $n$ 步回报更新 Critic。
+
+因此 A3C 的“公式主干”并没有脱离 Actor-Critic，只是把这些局部回报和梯度分散到多个 worker 上异步计算。
 
 异步会产生稍旧的参数（stale gradient），换来更低的轨迹相关性和更高的 CPU 采样吞吐；A2C 则等所有环境采完再同步更新。
 
@@ -276,6 +349,15 @@ A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，
   → 更新在线 Actor：最小化 -Q(s,Actor(s))
   → 软更新 target ← τ·online+(1-τ)·target
 ```
+
+把 DDPG 写成一轮参数更新的标准公式流程，可以理解为：
+
+1. 在线 Actor 输出确定性动作，并叠加探索噪声与环境交互。
+2. 从 Replay Buffer 采样 batch：$(s_t,a_t,r_t,s_{t+1},d_t)$。
+3. 用 target Actor 和 target Critic 计算目标 $y_t$。
+4. 最小化 Bellman 残差，更新在线 Critic。
+5. 固定 Critic，最大化当前 Actor 产生动作的 Q 值。
+6. 对目标网络做软更新。
 
 读这条流程时可以记住：**Actor 负责提出动作，Critic 负责给动作打分，Replay Buffer 负责提供旧作业，target 网络负责提供稳定的参考答案。** 只有当录像库里积累了足够多的 transition 后才开始更新；每次随机抽一小批，抽完放回去，下一次还可能再次抽到。
 
@@ -300,6 +382,11 @@ $$
 - $\mathcal{D}$ 表示 Replay Buffer 中的数据分布。
 - 目标动作由 target Actor $\mu_{\theta'}$ 产生，而不是当前在线 Actor。
 - 目标 Q 值由 target Critic $Q_{\phi'}$ 给出，因此目标更稳定。
+
+从优化角度看：
+
+- $L_Q$ 让 Critic 学会满足 Bellman 方程，判断动作到底值多少分。
+- $L_\pi$ 前面的负号表示，最小化损失等价于最大化 $Q_\phi(s,\mu_\theta(s))$，也就是让 Actor 输出更高价值的动作。
 
 软更新通常写成：
 
@@ -335,6 +422,16 @@ SAC 仍从 Replay Buffer 采样，但 Actor 输出随机分布，两个 Critic �
   → 软更新两个 target Critic
 ```
 
+把 SAC 一轮更新写成更标准的公式流程，可以分成 7 步：
+
+1. 用随机策略 $\pi_\theta(a|s)$ 与环境交互，并把 transition 放入 Replay Buffer。
+2. 从 Replay Buffer 采样 batch。
+3. 在下一状态 $s_{t+1}$ 上，从当前策略采样动作 $a_{t+1}$。
+4. 用两个 target Critic 的较小值，加上熵项，构造软 Bellman 目标 $y_t$。
+5. 分别更新两个在线 Critic。
+6. 在当前状态重新采样动作，更新随机 Actor。
+7. 若启用自动温度调节，再更新 $\alpha$，最后软更新 target Critic。
+
 这条流程中最容易迷糊的是 `log_prob`：它表示“Actor 认为自己刚才这个动作有多常见”。动作越少见，熵奖励越大，SAC 就越愿意保留探索；动作虽然得分高但过于单一时，熵项会提醒 Actor 不要立刻把其他可能性全部删掉。等训练充分后，Q 值的作用逐渐占主导，策略才会稳定下来。
 
 SAC 的 Critic 目标通常写成：
@@ -344,6 +441,16 @@ y_t=r_t+\gamma(1-d_t)\left[\min_{j\in\{1,2\}}Q_{\phi'_j}(s_{t+1},a_{t+1})-\alpha
 $$
 
 其中 $a_{t+1}\sim\pi_\theta(\cdot|s_{t+1})$，也就是下一步动作是从当前随机策略里采样出来的。
+
+这里多出来的 $-\alpha\log\pi_\theta(a_{t+1}|s_{t+1})$ 是 SAC 的核心。它表示：目标里不只看未来奖励，还把“保持一定随机性”的收益也算进去。因此 SAC 学到的不是普通 Q 值，而是带熵正则的软 Q 值。
+
+把这种思想写成整体目标，就是：
+
+$$
+J(\pi)=\mathbb E\left[\sum_{t=0}^{\infty}\gamma^t\big(r(s_t,a_t)+\alpha\mathcal H(\pi(\cdot|s_t))\big)\right]
+$$
+
+它表示 SAC 最大化的是“累计奖励 + 累计熵收益”。
 
 Actor 的优化目标是：
 
@@ -363,6 +470,12 @@ L_\alpha=\mathbb E_{a_t\sim\pi_\theta}\left[-\alpha\big(\log\pi_\theta(a_t|s_t)+
 $$
 
 它的作用是把策略熵推向目标熵 $\mathcal H_{target}$：熵太低就增大 $\alpha$，熵太高就减小 $\alpha$。不少实现会把可学习参数改成 $\log\alpha$ 来优化，损失写法会有等价变形，但优化目标的含义不变。
+
+把 SAC 的三组目标连起来看：
+
+- Critic 通过 $y_t$ 学习软 Q 值。
+- Actor 通过 $L_\pi$ 在“价值高”和“保持探索”之间找平衡。
+- 温度参数通过 $L_\alpha$ 自动决定探索到底应该占多大权重。
 
 高熵意味着保留更多探索；熵过低时自动增大 $\alpha$，熵过高时减小 $\alpha$，因此 SAC 通常比 DDPG 更稳。
 
