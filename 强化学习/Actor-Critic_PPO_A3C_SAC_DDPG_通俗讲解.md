@@ -189,24 +189,67 @@ loss = policy_loss + value_coef * value_loss - entropy_coef * dist.entropy().mea
 
 可以把 PPO 想成教练给学员改动作：学员这次做得好，当然要鼓励，但不能因为一次发挥好就要求他以后百分之百照这个动作做。PPO 会先记住“练习当时这个动作有多大概率”，更新时比较新旧概率；差距太大就只按允许的最大幅度计算奖励。
 
-A2C 的批量流程不变。PPO 采样时保存 `old_log_prob`，更新时比较新旧策略：
+A2C 的批量流程不变。PPO 采样时保存 `old_log_prob`，更新时比较新旧策略。
+
+把 PPO 的训练流程直接写成“每一步对应一个公式”，可以写成：
+
+1. 先固定旧策略采样，得到当前 rollout：
+
+$$
+\mathcal D=\{(s_t,a_t,r_t,s_{t+1},d_t,\log\pi_{old}(a_t|s_t),V_\phi(s_t))\}_{t=1}^T
+$$
+
+这里 $\mathcal D$ 表示当前这一轮收集到的数据；除了状态、动作、奖励外，还要保存旧策略概率和价值估计，供后续更新使用。
+
+2. 再用 rollout 计算 advantage 和 return：
+
+$$
+\delta_t=r_t+\gamma(1-d_t)V_\phi(s_{t+1})-V_\phi(s_t)
+$$
+
+$$
+A_t=\delta_t+\gamma\lambda(1-d_t)A_{t+1},\qquad R_t=A_t+V_\phi(s_t)
+$$
+
+这一步先算 TD 误差 $\delta_t$，再递推得到 advantage $A_t$，最后还原出给 Critic 学习的回报目标 $R_t$。
+
+如果这些符号看着太抽象，可以先只记住下面这张“小抄”：
+
+- $r_t$：这一时刻环境真正给你的即时奖励。
+- $V_\phi(s_t)$：Critic 原来估计“当前状态大概值多少分”。
+- $\delta_t$：现实结果和 Critic 预估之间的差，也就是“这一小步的惊喜值”。
+- $A_t$：这个动作最终到底比平均水平好多少。
+- $R_t$：给 Critic 当监督答案的回报目标。
+
+你完全可以把这一步读成：
 
 ```text
-按当前策略采集 rollout，并保存 old_log_prob
-  → 计算 GAE / return
-  → 切成 minibatch，重复 K 个 epoch
-  → ratio=exp(new_log_prob-old_log_prob)
-  → 对 ratio 做 clip，更新 policy/value/entropy
-  → 丢弃 rollout，重新采样
+先看这一步实际拿了多少奖励
+  → 再看 Critic 原来估得准不准
+  → 两者的差变成 delta
+  → 再把后面几步的影响也折回来，得到 advantage
+  → 最后给 Critic 准备一个要去拟合的 return
 ```
 
-把 PPO 的训练流程翻成更标准的公式步骤，可以写成：
+举个单样本数字例子。假设某一步：
 
-1. 用旧策略 $\pi_{old}$ 采样，得到 rollout，并保存 $\log\pi_{old}(a_t|s_t)$。
-2. 由 rollout 计算 advantage $A_t$ 和 return $R_t$。
-3. 用当前策略 $\pi_\theta$ 重新计算这些旧动作在当前策略下的概率。
-4. 用概率比值 $r_t(\theta)$ 构造 clipped objective，更新 Actor。
-5. 用 $R_t$ 更新 Critic，并加入熵项保持探索。
+- 当前奖励 $r_t=1.0$
+- 折扣因子 $\gamma=0.99$
+- 终止标记 $d_t=0$
+- Critic 估计当前状态价值 $V(s_t)=2.0$
+- Critic 估计下一状态价值 $V(s_{t+1})=2.5$
+
+那么
+
+$$
+\delta_t=1.0+0.99\times2.5-2.0=1.475
+$$
+
+这表示：**这一步的真实结果，比 Critic 原先预期的还要好 1.475 分。**
+
+如果后面几步累计下来，最后算出的 $A_t$ 仍然是正的，比如 $A_t=1.2$，那 PPO 就会认为：这个动作值得鼓励。
+
+3. 用当前策略重新评估旧动作的概率变化：
 
 $$r_t(\theta)=\frac{\pi_\theta(a_t|s_t)}{\pi_{old}(a_t|s_t)}$$
 
@@ -215,6 +258,25 @@ $$r_t(\theta)=\frac{\pi_\theta(a_t|s_t)}{\pi_{old}(a_t|s_t)}$$
 - $r_t(\theta)>1$ 表示当前策略提高了该动作概率。
 - $r_t(\theta)<1$ 表示当前策略降低了该动作概率。
 - $r_t(\theta)=1$ 表示该动作概率没有变化。
+
+这里最容易混淆的是：上面的 $r_t(\theta)$ 和前面的奖励 $r_t$ 不是一回事。
+
+- 前面的 $r_t$ 是 reward，表示环境给了多少分。
+- 这里的 $r_t(\theta)$ 是 ratio，表示新旧策略概率的比值。
+
+为了避免脑子打结，你可以强行把它读成：
+
+$$
+	ext{ratio} = \frac{\text{新策略对这个动作的概率}}{\text{旧策略对这个动作的概率}}
+$$
+
+如果旧策略对“向右”这个动作的概率是 0.20，新策略现在变成了 0.24，那么：
+
+$$
+r_t(\theta)=\frac{0.24}{0.20}=1.2
+$$
+
+意思就是：**新策略比旧策略更愿意做这个动作了，而且多愿意了 20%。**
 
 $$
 L_t^{CLIP}(\theta)=\min\Big(r_t(\theta)A_t,\operatorname{clip}(r_t(\theta),1-\epsilon,1+\epsilon)A_t\Big)
@@ -227,13 +289,72 @@ $$
 
 取两者较小值，就是为了防止策略朝同一个方向走得太猛。
 
+这条式子如果直接看不顺，可以拆成两种情况：
+
+### 情况 1：这个动作是好动作，$A_t>0$
+
+这时 PPO 本来想把这个动作概率调大。
+
+假设：
+
+- $A_t=2$
+- 旧概率是 0.20
+- 新概率想调到 0.30
+- 那么 $r_t(\theta)=0.30/0.20=1.5$
+- 设 $\epsilon=0.2$
+
+不加限制时：
+
+$$
+r_t(\theta)A_t=1.5\times2=3.0
+$$
+
+但 clip 后，比例最多只能按 $1.2$ 算：
+
+$$
+\operatorname{clip}(1.5,0.8,1.2)\times2=1.2\times2=2.4
+$$
+
+于是 PPO 取较小值 2.4，而不是 3.0。意思就是：
+
+**这个动作确实好，可以鼓励，但别一下子鼓励过头。**
+
+### 情况 2：这个动作是坏动作，$A_t<0$
+
+这时 PPO 本来想把这个动作概率调小。
+
+假设：
+
+- $A_t=-2$
+- 旧概率是 0.20
+- 新概率想降到 0.10
+- 那么 $r_t(\theta)=0.10/0.20=0.5$
+
+不加限制时：
+
+$$
+r_t(\theta)A_t=0.5\times(-2)=-1.0
+$$
+
+clip 后，下限只能按 $0.8$ 算：
+
+$$
+\operatorname{clip}(0.5,0.8,1.2)\times(-2)=0.8\times(-2)=-1.6
+$$
+
+PPO 仍然取两者较小值，也就是更保守地限制这次更新幅度。直觉上就是：
+
+**这个动作该压，但也别一口气把它概率砍得太狠。**
+
+4. 用 clip 后的代理目标更新 Actor：
+
 训练时真正最大化的一般是整批样本的期望：
 
 $$
 \mathcal{L}^{CLIP}(\theta)=\mathbb{E}_t\left[L_t^{CLIP}(\theta)\right]
 $$
 
-若写成工程里更常见的总损失形式，通常还会加上价值项和熵项：
+5. 同时更新 Critic，并保留熵正则：
 
 $$
 L^{PPO}=L_{policy}+c_vL_{value}-c_e\,\mathbb E_t\left[\mathcal H\big(\pi_\theta(\cdot|s_t)\big)\right]
@@ -253,6 +374,23 @@ $$
 - 熵项 $\mathcal H$ 用来防止动作分布过早塌缩。
 - $c_v$ 和 $c_e$ 是控制价值损失与熵奖励权重的超参数。
 
+如果把这一堆损失再翻回人话，其实就是三个老师同时给分：
+
+- 第一个老师看策略：好动作概率有没有往上提，坏动作概率有没有往下降，而且别改太猛。
+- 第二个老师看价值：Critic 对 return 的估计准不准。
+- 第三个老师看探索：动作分布是不是过早变得太死板。
+
+所以 PPO 不是只做一件事，而是在同时平衡三件事：
+
+```text
+策略要变好
+  → 但别变得太猛
+  → Critic 还得估得更准
+  → 同时保留一点探索
+```
+
+这样一来，PPO 的每一步都可以用公式读成：采样旧数据 $\rightarrow$ 算优势 $\rightarrow$ 比较新旧概率 $\rightarrow$ clip 更新策略 $\rightarrow$ 同步更新价值网络。
+
 这条式子最好分正负 advantage 两种情况看：
 
 - 如果 $A_t>0$，说明这个动作比预期好，希望把它概率变大，但最多放大到 $1+\epsilon$ 附近。
@@ -260,22 +398,31 @@ $$
 
 因此 clip 的作用不是“让策略不学习”，而是“别一次学过头”。
 
-下面是 PPO 的伪代码：
-
-```text
-new_log_prob = actor(batch.state).log_prob(batch.action)
-ratio = (new_log_prob - batch.old_log_prob).exp()
-surr1 = ratio * batch.advantage
-surr2 = ratio.clamp(1-eps, 1+eps) * batch.advantage
-policy_loss = -torch.min(surr1, surr2).mean()
-value_loss = Huber(Critic(batch.state), batch.return)
-loss = policy_loss + value_coef × value_loss - entropy_coef × entropy
-更新网络
-```
-
 $A_t>0$ 时鼓励动作但限制增幅，$A_t<0$ 时抑制动作但限制降幅。PPO 只能有限重复使用当前 rollout，不能长期回放任意旧数据。
 
 因此 PPO 一轮训练可以这样读：先让机器人按旧策略采样，给每条经验贴上“原来动作概率”和“好坏分数”；然后用这批经验训练几遍，每一遍都检查新策略有没有偏离太远。训练完就把这批经验作废，重新让当前策略去环境中采样。
+
+如果你把 PPO 想成真正会运行的训练循环，可以按下面这 6 句话理解：
+
+1. **先用当前策略出去采样**：机器人真的去环境里走一段，记下状态、动作、奖励，以及“当时这个动作的旧概率”。
+2. **先别急着改参数**：这一整批数据要先固定住，因为 PPO 的核心就是“拿新策略去对比旧策略”。
+3. **回头给每一步打分**：用 GAE 算出每一步动作到底比预期好多少，也就是 advantage。
+4. **开始反复复习这一批数据**：不是只学一遍，而是切成 minibatch 多学几个 epoch。
+5. **每次更新时都问一句**：新策略对这个旧动作的概率，和旧策略相比变了多少？如果变太猛，就 clip 掉。
+6. **这批数据用完就扔**：因为一旦策略变了，旧 rollout 就不再是“当前策略真实采到的数据”了。
+
+把它浓缩成伪代码式的人话就是：
+
+```text
+旧策略先去采样一批数据
+  → 回头算每一步 advantage
+  → 用这批旧数据训练当前策略几遍
+  → 训练时始终拿“当前概率 / 旧概率”做对照
+  → 如果变化太大就踩刹车
+  → 这批数据作废，再出去采下一批
+```
+
+PPO 最容易卡住的点只有一个：**它不是“边走边学”，而是“先完整收集一批旧数据，再拿这批旧数据小心地更新当前策略”。** 这就是它和最基础 Actor-Critic 的最大流程差别。
 
 举个数字例子：旧策略在某状态下以 20% 概率向右，向右的 advantage 为正。普通更新可能把概率直接改到 80%；PPO 设定 $ε=0.2$ 后，允许的比例大约只到 1.2 倍，超过部分不再继续奖励。于是策略会变好，但不会被一次样本带偏。
 
@@ -287,16 +434,25 @@ $A_t>0$ 时鼓励动作但限制增幅，$A_t<0$ 时抑制动作但限制降幅�
 
 A3C 的主干和 A2C 很接近，但经典 A3C 更常见的是 $n$ 步 return，而不是必须使用 GAE。这里把它按更标准的 $n$ 步写法展开；真正的区别在于多个 worker 何时更新全局网络：
 
-```text
-全局 Actor-Critic → 复制给多个 worker
-每个 worker 独立环境运行 t_max 步
-  → 终止则 bootstrap=0，否则 bootstrap=V(s_T)
-  → 本地从后往前算 return / advantage 和梯度
-  → 不等待其他 worker，异步把梯度应用到全局网络
-  → 重新拉取全局参数并继续 rollout
-```
+把 A3C 的局部更新直接写成“每一步对应一个公式”，可以写成：
 
-若某个 worker 从时刻 $t$ 开始向后运行了 $n$ 步，那么常见的 $n$ 步回报是：
+1. 每个 worker 先从全局网络拷贝本地参数：
+
+$$
+{}\theta_i\leftarrow\theta,\qquad \phi_i\leftarrow\phi
+$$
+
+这里 $\theta,\phi$ 是全局 Actor 和 Critic 参数，$\theta_i,\phi_i$ 是第 $i$ 个 worker 的本地副本。
+
+2. 本地 worker 独立和环境交互，得到一段长度为 $n$ 的轨迹：
+
+$$
+{}\tau_i=\{(s_t,a_t,r_t,\dots,s_{t+n})\}
+$$
+
+不同 worker 各自收集轨迹，这就是 A3C 降低样本相关性的来源。
+
+3. 对这段轨迹计算 $n$ 步回报：
 
 $$
 R_t^{(n)}=\sum_{k=0}^{n-1}\gamma^k r_{t+k}+\gamma^nV(s_{t+n})
@@ -304,13 +460,13 @@ $$
 
 如果在第 $t+n$ 步之前 episode 已经终止，那么最后一项 bootstrap 价值直接记为 0。
 
-对应的 advantage 写成：
+4. 用 $n$ 步回报计算 advantage：
 
 $$
 A_t=R_t^{(n)}-V(s_t)
 $$
 
-于是策略损失和价值损失分别是：
+5. 构造本地策略损失和价值损失：
 
 $$
 L_\pi=-\log\pi_\theta(a_t|s_t)A_t
@@ -326,6 +482,15 @@ $$
 - $A_t$ 判断当前动作相对状态基线 $V(s_t)$ 是否更好。
 - $L_\pi$ 用 advantage 更新 Actor，$L_V$ 用 $n$ 步回报更新 Critic。
 
+6. 本地算出梯度后，直接异步更新全局参数：
+
+$$
+{}\theta\leftarrow\theta-\eta\nabla_\theta L_\pi,\qquad
+\phi\leftarrow\phi-\eta\nabla_\phi L_V
+$$
+
+这一步的关键就是不等其他 worker，同步障碍更少，但梯度可能稍微陈旧。
+
 因此 A3C 的“公式主干”并没有脱离 Actor-Critic，只是把这些局部回报和梯度分散到多个 worker 上异步计算。
 
 异步会产生稍旧的参数（stale gradient），换来更低的轨迹相关性和更高的 CPU 采样吞吐；A2C 则等所有环境采完再同步更新。
@@ -340,42 +505,53 @@ $$
 
 连续动作无法枚举所有动作概率，DDPG 让 Actor 直接输出 $a=\mu_\theta(s)$，并维护在线/目标两套网络：
 
-```text
-在线 Actor(state)+探索噪声 → 环境 → transition 写入 Replay Buffer
-  → 随机采样 batch
-  → target Actor 产生 next_action
-  → target Critic 得到 y=r+γ(1-d)Q'(s',next_action)
-  → 更新在线 Critic：使 Q(s,a) 接近 y
-  → 更新在线 Actor：最小化 -Q(s,Actor(s))
-  → 软更新 target ← τ·online+(1-τ)·target
-```
+把 DDPG 的一轮更新直接写成“每一步对应一个公式”，可以写成：
 
-把 DDPG 写成一轮参数更新的标准公式流程，可以理解为：
+1. 在线 Actor 输出动作，并叠加探索噪声：
 
-1. 在线 Actor 输出确定性动作，并叠加探索噪声与环境交互。
-2. 从 Replay Buffer 采样 batch：$(s_t,a_t,r_t,s_{t+1},d_t)$。
-3. 用 target Actor 和 target Critic 计算目标 $y_t$。
-4. 最小化 Bellman 残差，更新在线 Critic。
-5. 固定 Critic，最大化当前 Actor 产生动作的 Q 值。
-6. 对目标网络做软更新。
+$$
+a_t=\mu_\theta(s_t)+\varepsilon_t
+$$
 
-读这条流程时可以记住：**Actor 负责提出动作，Critic 负责给动作打分，Replay Buffer 负责提供旧作业，target 网络负责提供稳定的参考答案。** 只有当录像库里积累了足够多的 transition 后才开始更新；每次随机抽一小批，抽完放回去，下一次还可能再次抽到。
+这里 $\mu_\theta(s_t)$ 是确定性策略输出，$\varepsilon_t$ 是探索噪声；没有这项噪声，DDPG 几乎不会主动探索。
 
-$$L_Q=(Q_\phi(s,a)-y)^2,\quad L_\pi=-Q_\phi(s,\mu_\theta(s))$$
+2. 把交互得到的 transition 放入 Replay Buffer：
 
-把 DDPG 的目标写完整一点就是：
+$$
+\mathcal D\leftarrow \mathcal D\cup\{(s_t,a_t,r_t,s_{t+1},d_t)\}
+$$
+
+这一步的作用是积累可重复使用的离策略样本。
+
+3. 用 target Actor 计算下一状态动作：
+
+$$
+a_{t+1}'=\mu_{\theta'}(s_{t+1})
+$$
+
+这里用的是 target Actor，而不是当前在线 Actor，因为 target 网络更稳定。
+
+4. 用 target Critic 构造 Bellman 目标：
 
 $$
 y_t=r_t+\gamma(1-d_t)Q_{\phi'}\big(s_{t+1},\mu_{\theta'}(s_{t+1})\big)
 $$
 
+5. 用均方 Bellman 误差更新 Critic：
+
 $$
 L_Q=\mathbb{E}_{(s_t,a_t,r_t,s_{t+1})\sim\mathcal{D}}\left[\big(Q_\phi(s_t,a_t)-y_t\big)^2\right]
 $$
 
+这个损失的意思是让 Critic 对 $(s_t,a_t)$ 的估计尽量逼近目标值 $y_t$。
+
+6. 固定 Critic，更新 Actor：
+
 $$
 L_\pi=-\mathbb{E}_{s_t\sim\mathcal{D}}\left[Q_\phi\big(s_t,\mu_\theta(s_t)\big)\right]
 $$
+
+负号表示最小化损失等价于最大化 Q 值，也就是让 Actor 输出更高价值的动作。
 
 这里的关键点是：
 
@@ -383,23 +559,50 @@ $$
 - 目标动作由 target Actor $\mu_{\theta'}$ 产生，而不是当前在线 Actor。
 - 目标 Q 值由 target Critic $Q_{\phi'}$ 给出，因此目标更稳定。
 
+7. 最后软更新目标网络：
+
+$$
+{}\theta'\leftarrow \tau\theta+(1-\tau)\theta',\qquad
+\phi'\leftarrow \tau\phi+(1-\tau)\phi'
+$$
+
+这里的 $\tau$ 通常很小，因此 target 网络只会缓慢追随在线网络，避免训练目标剧烈摆动。
+
 从优化角度看：
 
 - $L_Q$ 让 Critic 学会满足 Bellman 方程，判断动作到底值多少分。
 - $L_\pi$ 前面的负号表示，最小化损失等价于最大化 $Q_\phi(s,\mu_\theta(s))$，也就是让 Actor 输出更高价值的动作。
-
-软更新通常写成：
-
-$$
-  heta'\leftarrow \tau\theta+(1-\tau)\theta',\qquad
-\phi'\leftarrow \tau\phi+(1-\tau)\phi'
-$$
 
 $\tau$ 往往很小，例如 $0.005$，表示目标网络只缓慢跟随在线网络。
 
 Actor 本身不随机，训练动作必须加入高斯或 OU 噪声。DDPG 对 Critic 高估和噪声较敏感，实际项目常优先使用 TD3 或 SAC。
 
 整轮更新的直觉是：先用目标网络估算“这一步之后最多还能拿多少分”，把它当成标准答案；Critic 对照标准答案改进，Actor 再根据 Critic 的方向微调动作。最后只把目标网络向在线网络靠近一点点，下一轮的标准答案就不会突然跳变。
+
+如果把 DDPG 写成最容易记住的“代码主循环”，其实就是下面这 7 步：
+
+1. **先让 Actor 出一个连续动作**：例如输出一个力矩或速度。
+2. **为了探索，给动作加一点噪声**：否则 Actor 每次都出几乎一样的值，很难学到新东西。
+3. **把这一步经验存进 Replay Buffer**：先存下来，不急着立刻用它更新。
+4. **从 Buffer 随机抽一批旧经验**：注意这里抽到的往往不是刚才那一步，而是过去任意时刻的录像。
+5. **先更新 Critic**：用 target 网络算标准答案 $y_t$，让 Critic 学会“这条经验到底值多少分”。
+6. **再更新 Actor**：让 Actor 输出的动作朝“Critic 觉得更高分”的方向移动。
+7. **最后慢慢更新 target 网络**：不要让标准答案跟着在线网络一起剧烈跳动。
+
+把它翻成一句特别口语的话：
+
+```text
+先把经验攒进录像库
+  → 随机抽旧录像做训练
+  → 先让 Critic 学会打分
+  → 再让 Actor 专门讨好 Critic
+  → target 网络慢慢跟，不要一起乱跳
+```
+
+DDPG 最容易卡住的点有两个：
+
+- **为什么先更新 Critic？** 因为 Actor 要靠 Critic 指方向，Critic 分都打不准，Actor 就会被带偏。
+- **为什么要 target 网络？** 因为你在学的同时，标准答案也在变；如果不用 target 网络，训练目标会像“边考试边改答案”，很容易不稳定。
 
 例如录像中记录“距离目标 2 米时输出 0.35 力矩，得到 +0.4 分”。训练时先问目标网络：到达下一状态后预计还能得 1.0 分，于是这条经验的标准答案约为 $0.4+\gamma\times1.0$。Critic 调整自己对这条经验的估计，Actor 则尝试把力矩往能让 Q 值更高的方向移动。
 
@@ -411,26 +614,34 @@ DDPG 找到一个看似不错的动作后可能停止探索。SAC 把“保持�
 
 SAC 仍从 Replay Buffer 采样，但 Actor 输出随机分布，两个 Critic 取较小值，并把熵计入目标：
 
-```text
-随机 Actor 采样 action、log_prob，与环境交互并写入 Buffer
-  → 随机采样 batch
-  → next_state 采样 next_action、next_log_prob
-  → target=r+γ(1-d)[min(Q1',Q2')-α·log_prob]
-  → 更新 Q1、Q2
-  → 当前 state 采样动作，最小化 α·log_prob-min(Q1,Q2)，更新 Actor
-  → 根据目标熵更新 α（可选）
-  → 软更新两个 target Critic
-```
+把 SAC 的一轮更新直接写成“每一步对应一个公式”，可以写成：
 
-把 SAC 一轮更新写成更标准的公式流程，可以分成 7 步：
+1. 先从随机策略中采样动作：
 
-1. 用随机策略 $\pi_\theta(a|s)$ 与环境交互，并把 transition 放入 Replay Buffer。
-2. 从 Replay Buffer 采样 batch。
-3. 在下一状态 $s_{t+1}$ 上，从当前策略采样动作 $a_{t+1}$。
-4. 用两个 target Critic 的较小值，加上熵项，构造软 Bellman 目标 $y_t$。
-5. 分别更新两个在线 Critic。
-6. 在当前状态重新采样动作，更新随机 Actor。
-7. 若启用自动温度调节，再更新 $\alpha$，最后软更新 target Critic。
+$$
+a_t\sim\pi_\theta(\cdot|s_t)
+$$
+
+这里动作本身就来自分布采样，而不是像 DDPG 那样先输出确定性动作再额外加噪声。
+
+2. 把采样得到的 transition 写入 Replay Buffer：
+
+$$
+\mathcal D\leftarrow \mathcal D\cup\{(s_t,a_t,r_t,s_{t+1},d_t)\}
+$$
+
+因此 SAC 也是 off-policy，可以反复利用旧数据。
+
+3. 在下一状态重新采样动作，并计算其对数概率：
+
+$$
+a_{t+1}\sim\pi_\theta(\cdot|s_{t+1}),\qquad
+\log\pi_\theta(a_{t+1}|s_{t+1})
+$$
+
+这个对数概率后面会直接进入目标函数，用来衡量探索收益。
+
+4. 构造 soft Bellman 目标：
 
 这条流程中最容易迷糊的是 `log_prob`：它表示“Actor 认为自己刚才这个动作有多常见”。动作越少见，熵奖励越大，SAC 就越愿意保留探索；动作虽然得分高但过于单一时，熵项会提醒 Actor 不要立刻把其他可能性全部删掉。等训练充分后，Q 值的作用逐渐占主导，策略才会稳定下来。
 
@@ -452,6 +663,16 @@ $$
 
 它表示 SAC 最大化的是“累计奖励 + 累计熵收益”。
 
+5. 分别更新两个 Critic：
+
+$$
+L_Q^{(j)}=\mathbb E_{(s_t,a_t,r_t,s_{t+1})\sim\mathcal D}\left[\big(Q_{\phi_j}(s_t,a_t)-y_t\big)^2\right],\qquad j\in\{1,2\}
+$$
+
+两个 Critic 都去拟合同一个软目标，但后面取较小值参与 Actor 更新，以抑制高估。
+
+6. 更新随机 Actor：
+
 Actor 的优化目标是：
 
 $$
@@ -463,13 +684,22 @@ $$
 - $-\min_jQ_{\phi_j}(s_t,a_t)$ 鼓励选择高价值动作。
 - $\alpha\log\pi_\theta(a_t|s_t)$ 鼓励保留一定随机性，避免策略太早塌缩成单一动作。
 
-如果启用自动温度调节，还会再最小化一个温度损失：
+7. 如果启用自动温度调节，再最小化温度损失：
 
 $$
 L_\alpha=\mathbb E_{a_t\sim\pi_\theta}\left[-\alpha\big(\log\pi_\theta(a_t|s_t)+\mathcal H_{target}\big)\right]
 $$
 
 它的作用是把策略熵推向目标熵 $\mathcal H_{target}$：熵太低就增大 $\alpha$，熵太高就减小 $\alpha$。不少实现会把可学习参数改成 $\log\alpha$ 来优化，损失写法会有等价变形，但优化目标的含义不变。
+
+8. 最后软更新两个 target Critic：
+
+$$
+\phi_1'\leftarrow \tau\phi_1+(1-\tau)\phi_1',\qquad
+\phi_2'\leftarrow \tau\phi_2+(1-\tau)\phi_2'
+$$
+
+这一步保证用于构造目标值的 target Critic 变化更平滑。
 
 把 SAC 的三组目标连起来看：
 
@@ -480,6 +710,41 @@ $$
 高熵意味着保留更多探索；熵过低时自动增大 $\alpha$，熵过高时减小 $\alpha$，因此 SAC 通常比 DDPG 更稳。
 
 所以 SAC 的一轮可以用一句话概括：从录像库抽样，先问两位 Critic“保守估计能得多少分”，再让随机 Actor 在“得分高”和“别太早固化”之间取平衡，最后慢慢同步目标 Critic。
+
+如果你已经懂了 DDPG，再看 SAC 可以直接把它当成“DDPG 的三处升级版”：
+
+1. **Actor 不再输出唯一动作，而是输出一个概率分布**。
+2. **Critic 不再只用一个，而是同时用两个，取更保守的那个**。
+3. **优化目标里不只追求高 Q 值，还额外奖励探索**。
+
+把 SAC 的训练循环按程序顺序翻成人话，就是：
+
+1. **先按随机策略和环境交互**：动作不是固定值，而是从策略分布里采样出来的。
+2. **把经验存进 Replay Buffer**：这一点和 DDPG 一样，都是 off-policy。
+3. **从 Buffer 抽一批数据**：拿旧录像反复学。
+4. **先更新两个 Critic**：但构造目标时取两者中较小的 Q 值，防止其中一个过度乐观。
+5. **再更新 Actor**：既想让 Critic 打高分，又不能让策略过早变得只会一种动作。
+6. **如果开了自动温度调节，再更新 $\alpha$**：决定“探索这件事值多少钱”。
+7. **最后软更新两个 target Critic**：让目标保持平滑。
+
+可以把它压缩成下面这条记忆链：
+
+```text
+随机 Actor 先采样动作
+  → 经验进 Buffer
+  → 双 Critic 先学“保守打分”
+  → Actor 再学“高分 + 保持随机”
+  → alpha 自动调探索强度
+```
+
+SAC 最容易卡住的点是：**为什么损失里会有 $\alpha\log\pi$ 这一项？**
+
+直觉上，它不是在“惩罚动作概率”本身，而是在说：
+
+- 如果策略已经太死板，只会一种动作，那探索不够，应该把随机性拉回来一点。
+- 如果策略已经很发散，到处乱试，那就让随机性降下来，把注意力更多放到高价值动作上。
+
+所以 SAC 不是单纯追求“分最高”，而是在追求“分高，同时别太早把其他可能性全删掉”。
 
 假设两个 Critic 对同一个动作分别打 0.8 分和 1.1 分，SAC 先采用较保守的 0.8 分；如果 Actor 这次动作概率很低，说明它是在尝试新动作，熵项会抵消一部分惩罚。训练初期因此敢于探索，训练后期才逐渐集中到真正可靠的动作上。
 
