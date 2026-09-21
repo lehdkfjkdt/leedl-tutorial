@@ -140,6 +140,112 @@ $$
 R_t=A_t+V(s_t)
 $$
 
+有了 $A_t$ 和 $R_t$ 之后，A2C 才真正知道该怎么更新 Actor 和 Critic。最常见的写法是：
+
+$$
+L_{actor}=-\mathbb E_t\left[\log\pi_\theta(a_t|s_t)\,A_t\right]
+$$
+
+$$
+L_{critic}=\frac{1}{2}\,\mathbb E_t\left[(V_\phi(s_t)-R_t)^2\right]
+$$
+
+如果再把熵正则一起写进去，总损失常写成：
+
+$$
+L=L_{actor}+c_vL_{critic}-c_e\,\mathbb E_t\left[\mathcal H\big(\pi_\theta(\cdot|s_t)\big)\right]
+$$
+
+你可以把这三条式子分别理解成：
+
+- $L_{actor}$：让策略更倾向于重复 advantage 为正的动作，减少 advantage 为负的动作。
+- $L_{critic}$：让 Critic 的价值估计尽量逼近回报目标 $R_t$。
+- 熵项 $\mathcal H$：防止策略过早塌缩成“只会一种动作”。
+
+下面把每个字母都拆开说清楚：
+
+- $s_t$：第 $t$ 步的状态。
+- $a_t$：第 $t$ 步实际执行的动作。
+- $\pi_\theta(a_t|s_t)$：Actor 在状态 $s_t$ 下选择动作 $a_t$ 的概率，$\theta$ 是 Actor 的参数。
+- $\log\pi_\theta(a_t|s_t)$：这个动作的对数概率。策略梯度里常用 log-prob 来做更新。
+- $A_t$：advantage，表示“这个动作比当前状态的平均水平好多少”。
+- $V_\phi(s_t)$：Critic 对当前状态价值的估计，$\phi$ 是 Critic 的参数。
+- $R_t$：给 Critic 学习的回报目标。
+- $\mathbb E_t[\cdot]$：对这一批样本求平均，可以理解成“把整批数据的损失平均一下”。
+- $\mathcal H(\pi_\theta(\cdot|s_t))$：策略熵，表示动作分布有多分散。
+- $c_v$：价值损失的权重。
+- $c_e$：熵正则的权重。
+
+如果只看 Actor 更新式
+
+$$
+L_{actor}=-\mathbb E_t\left[\log\pi_\theta(a_t|s_t)\,A_t\right]
+$$
+
+它的逻辑其实很简单：
+
+- 当 $A_t>0$ 时，说明这个动作比平均水平好，优化会倾向于增大 $\log\pi_\theta(a_t|s_t)$，也就是增大这个动作的概率。
+- 当 $A_t<0$ 时，说明这个动作比平均水平差，优化会倾向于减小这个动作的概率。
+
+所以 Actor 更新的本质就是一句话：
+
+```text
+好动作以后更常做
+坏动作以后少做
+```
+
+而 Critic 更新式
+
+$$
+L_{critic}=\frac{1}{2}\,\mathbb E_t\left[(V_\phi(s_t)-R_t)^2\right]
+$$
+
+本质上就是一个均方误差：
+
+- 如果 Critic 估低了，就往上修。
+- 如果 Critic 估高了，就往下修。
+
+所以 Critic 更新的本质就是：
+
+```text
+让当前价值估计 V(s_t)
+越来越接近回报目标 R_t
+```
+
+可以把 A2C 的参数更新顺序记成下面这样：
+
+1. 先 rollout 一批数据。
+2. 算出每一步的 $A_t$ 和 $R_t$。
+3. 用 $L_{critic}$ 先把 Critic 的“打分标准”修准。
+4. 再用 $L_{actor}$ 让 Actor 根据 advantage 调整动作概率。
+5. 如果用了熵正则，就顺便保留一点探索。
+
+举个单样本直觉例子。假设在某一步：
+
+- $\log\pi_\theta(a_t|s_t)=-0.7$
+- $A_t=1.5$
+
+那么 Actor 这一项损失就是：
+
+$$
+-\log\pi_\theta(a_t|s_t)A_t=-(-0.7)\times1.5=1.05
+$$
+
+因为 $A_t$ 是正的，优化器会倾向于把这个损失往更小方向推，也就等价于让 $\log\pi_\theta(a_t|s_t)$ 变大，意味着这个动作以后更容易被选中。
+
+再假设：
+
+- $V_\phi(s_t)=2.0$
+- $R_t=3.2$
+
+那么 Critic 的误差就是：
+
+$$
+L_{critic}=\frac{1}{2}(2.0-3.2)^2=0.72
+$$
+
+说明 Critic 低估了这个状态，接下来它会往更大的价值方向修正。
+
 这组公式的直觉是：
 
 - $\delta_t$ 看的是“当前这一步有没有比预期更好”。
